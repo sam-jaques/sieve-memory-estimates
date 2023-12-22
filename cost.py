@@ -8,8 +8,12 @@ from mpmath import mp
 from collections import namedtuple
 from utils import load_probabilities, PrecomputationRequired
 from config import MagicConstants
-from probabilities import W, C, pf, ngr_pf, ngr
+from probabilities import W, Wmatched, C, pf, ngr_pf, ngr, p_recursion_hit, DisplayConfig
 from ge19 import estimate_abstract_to_physical
+from sys import stdout
+from tqdm import tqdm
+
+
 
 """
 COSTS
@@ -65,6 +69,7 @@ METRICS
 ClassicalMetrics = {
     "classical",  # gate count
     "naive_classical",  # query cost
+    "hardware_time", # includes latency
 }
 
 QuantumMetrics = {
@@ -102,6 +107,8 @@ def local_min(f, low=None, high=None):
             return mp.mpf("inf")
 
     return fminbound(ff, float(low), float(high))
+
+
 
 
 def null_costf(qubits_in=0, qubits_out=0):
@@ -573,6 +580,8 @@ def raw_cost(cost, metric):
         return cost.gates
     elif metric == "naive_classical":
         return cost.gates
+    elif metric == "hardware_time":
+        return cost.gates
     else:
         raise ValueError("Unknown metric '%s'" % metric)
     return result
@@ -583,7 +592,7 @@ AllPairsResult = namedtuple(
 )
 
 
-def all_pairs(d, n=None, k=None, optimize=True, metric="dw", allow_suboptimal=False):
+def all_pairs(d, n=None, k=None, optimize=True, metric="dw", allow_suboptimal=False,list_size = None,kappangle=mp.pi/3):
     """
     Nearest Neighbor Search via a quadratic search over all pairs.
 
@@ -593,6 +602,8 @@ def all_pairs(d, n=None, k=None, optimize=True, metric="dw", allow_suboptimal=Fa
     :param optimize: optimize `n`
     :param metric: target metric
     :param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters given what is precomputed
+    :param list_size: 
+    :param kappa:ngle the target overlap (two vectors are "reducing" if the angle between them is less than kappa)
 
     """
     if n is None:
@@ -602,21 +613,22 @@ def all_pairs(d, n=None, k=None, optimize=True, metric="dw", allow_suboptimal=Fa
 
     k = k if k else int(MagicConstants.k_div_n * (n - 1))
 
-    pr = load_probabilities(d, n - 1, k)
+    pr = load_probabilities(d, n - 1, k,kappangle)
 
     def cost(pr):
-        N = 2 / ((1 - pr.eta) * C(pr.d, mp.pi / 3))
+        if not list_size:
+            list_size = 2 / ((1 - pr.eta) * C(pr.d, kappangle))
 
         if metric in ClassicalMetrics:
             look_cost = classical_popcount_costf(pr.n, pr.k, metric)
-            looks = (N ** 2 - N) / 2.0
+            looks = (list_size ** 2 - list_size) / 2.0
             search_one_cost = ClassicalCosts(
                 label="search", gates=look_cost.gates * looks, depth=look_cost.depth * looks
             )
         else:
-            look_cost = popcount_grover_iteration_costf(N, pr.n, pr.k, metric)
+            look_cost = popcount_grover_iteration_costf(list_size, pr.n, pr.k, metric)
             looks_factor = 11.0 / 15
-            looks = int(mp.ceil(looks_factor * N ** (3 / 2.0)))
+            looks = int(mp.ceil(looks_factor * list_size ** (3 / 2.0)))
             search_one_cost = compose_k_sequential(look_cost, looks)
 
         full_cost = raw_cost(search_one_cost, metric)
@@ -649,6 +661,8 @@ def all_pairs(d, n=None, k=None, optimize=True, metric="dw", allow_suboptimal=Fa
     )
 
 
+
+## MOSTLY IGNORING
 RandomBucketsResult = namedtuple(
     "RandomBucketsResult",
     ("d", "n", "k", "theta", "log_cost", "pf_inv", "eta", "metric", "detailed_costs"),
@@ -678,35 +692,45 @@ def random_buckets(
 
     k = k if k else int(MagicConstants.k_div_n * (n - 1))
     theta = theta1 if theta1 else 1.2860
-    pr = load_probabilities(d, n - 1, k)
+    pr = load_probabilities(d, n - 1, k,compute=True)
     ip_cost = MagicConstants.word_size ** 2 * d
 
     def cost(pr, T1):
         eta = 1 - ngr_pf(pr.d, pr.n, pr.k, beta=T1) / ngr(pr.d, beta=T1)
         N = 2 / ((1 - eta) * C(pr.d, mp.pi / 3))
         W0 = W(pr.d, T1, T1, mp.pi / 3)
-        buckets = 1.0 / W0
-        bucket_size = N * C(pr.d, T1)
+        m = log2(d)
+        def cost_per_code(code_size):
+            buckets = code_size
+            num_codes = int(1.0 / (W0*code_size))
+            bucket_size = N * C(pr.d, T1)
 
-        if metric in ClassicalMetrics:
-            look_cost = classical_popcount_costf(pr.n, pr.k, metric)
-            looks_per_bucket = (bucket_size ** 2 - bucket_size) / 2.0
-            search_one_cost = ClassicalCosts(
-                label="search",
-                gates=look_cost.gates * looks_per_bucket,
-                depth=look_cost.depth * looks_per_bucket,
-            )
-        else:
-            look_cost = popcount_grover_iteration_costf(bucket_size, pr.n, pr.k, metric)
-            looks_factor = (2 * W0) / (5 * C(pr.d, T1)) + 1.0 / 3
-            looks_per_bucket = int(looks_factor * bucket_size ** (3 / 2.0))
-            search_one_cost = compose_k_sequential(look_cost, looks_per_bucket)
 
-        fill_bucket_cost = N * ip_cost
-        search_bucket_cost = raw_cost(search_one_cost, metric)
-        full_cost = buckets * (fill_bucket_cost + search_bucket_cost)
+            if metric in ClassicalMetrics:
+                look_cost = classical_popcount_costf(pr.n, pr.k, metric)
+                looks_per_bucket = (bucket_size ** 2 - bucket_size) / 2.0
+                search_one_cost = ClassicalCosts(
+                    label="search",
+                    gates=look_cost.gates * looks_per_bucket,
+                    depth=look_cost.depth * looks_per_bucket,
+                )
+            else:
+                look_cost = popcount_grover_iteration_costf(bucket_size, pr.n, pr.k, metric)
+                looks_factor = (2 * W0) / (5 * C(pr.d, T1)) + 1.0 / 3
+                looks_per_bucket = int(looks_factor * bucket_size ** (3 / 2.0))
+                search_one_cost = compose_k_sequential(look_cost, looks_per_bucket)
 
-        return full_cost, look_cost, eta
+            memory = max(bucket_size*buckets, N*(m*32))*(m*32)
+            mem_cost =  pow(memory,1.5)* MagicConstants.BIT_OPS_PER_SORT_BIT
+
+
+            fill_bucket_cost = N * ip_cost
+            search_bucket_cost = raw_cost(search_one_cost, metric)
+            single_code_cost = buckets * (fill_bucket_cost + search_bucket_cost) + mem_cost
+            return single_code_cost*num_codes, look_cost, eta
+        best_code_size = local_min(lambda C: cost_per_code(C)[0], low=1.0,high=1.0/W0)
+        return cost_per_code(best_code_size)
+
 
     if optimize:
         theta = local_min(lambda T: cost(pr, T)[0], low=mp.pi / 6, high=mp.pi / 2)
@@ -715,7 +739,7 @@ def random_buckets(
             try:
                 n = 2 * (pr.n + 1) - 1
                 k = int(MagicConstants.k_div_n * n)
-                pr = load_probabilities(pr.d, n, k)
+                pr = load_probabilities(pr.d, n, k,compute=True)
             except PrecomputationRequired as e:
                 if allow_suboptimal:
                     break
@@ -743,12 +767,87 @@ def random_buckets(
 
 ListDecodingResult = namedtuple(
     "ListDecodingResult",
-    ("d", "n", "k", "theta1", "theta2", "log_cost", "pf_inv", "eta", "metric", "detailed_costs"),
+    ("d", "n", "k", "theta", "log_cost","code_size",  "pf_inv", "eta", "metric", "m","num_codes","filter_cost","memory_cost","search_cost"),
 )
 
 
+
+
+"""
+Nearest Neighbor Search via a decodable buckets as in BDGL16.
+
+:param d: search in S^{d-1}
+:param n: number of entries in popcount filter
+:param k: we accept if two vectors agree on ≤ k
+:param theta: array of filter creation angle
+:param optimize: optimize `n` and `theta`
+:param metric: target metric
+:param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters
+    given what is precomputed
+:param recursion_depth: number of recursive list decoding searches allowed, including this one
+:param exact: use exact formulas or not
+
+This function is a wrapper function. If optimize is false, it calls 
+`list_decoding_internal` directly.
+Otherwise, it uses the results from an optimized call -- which
+are imprecise, to save computation -- as inputs
+to a more precise call to `list_decoding_internal`
+"""
 def list_decoding(
-    d, n=None, k=None, theta1=None, theta2=None, optimize=True, metric="dw", allow_suboptimal=False
+    d, 
+    n=None, 
+    k=None, 
+    theta=None, 
+    given_code_size=None, 
+    optimize=True, 
+    metric="classical", 
+    allow_suboptimal=False, 
+    recursion_depth = 1
+): 
+
+    results =list_decoding_internal(
+        d=d,
+        n_in=n,
+        k_in=k,
+        theta_in=theta,
+        given_code_size=given_code_size,
+        optimize=optimize,
+        metric=metric,
+        allow_suboptimal=allow_suboptimal,
+        list_size=None,
+        kappangle=mp.pi/3,
+        recursion_depth=recursion_depth,
+        exact=True)
+    if not optimize:
+        return results
+    # Unwrap the optimal parameters for each level of recursion
+    thetas = [results[3]]
+    ns = [results[1]]
+    ks = [results[2]]
+    code_sizes = [2**results[5]]
+    while type(results[13]) == ListDecodingResult:
+        results = results[13]
+        thetas = thetas + [results[3]]
+        ns = ns + [results[1]]
+        ks = ks + [results[2]]
+        code_sizes = code_sizes + [2**results[5]]
+    return list_decoding_internal(d,ns,ks,thetas,code_sizes,False,metric,allow_suboptimal,None,mp.pi/3,recursion_depth,True)
+
+
+
+def list_decoding_internal(
+    d, 
+    n_in=None, 
+    k_in=None, 
+    theta_in=None, 
+    given_code_size=None, 
+    optimize=True, 
+    metric="classical", 
+    allow_suboptimal=False, 
+    list_size = None, 
+    kappangle = mp.pi / 3, 
+    recursion_depth = 1,
+    exact = True,
 ):
     """
     Nearest Neighbor Search via a decodable buckets as in BDGL16.
@@ -756,101 +855,424 @@ def list_decoding(
     :param d: search in S^{d-1}
     :param n: number of entries in popcount filter
     :param k: we accept if two vectors agree on ≤ k
-    :param theta1: filter creation angle
-    :param theta2: filter query angle
-    :param optimize: optimize `n`
+    :param theta_in: array of filter creation angle
+    :param optimize: optimize `n` and `theta`
     :param metric: target metric
     :param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters
         given what is precomputed
+    :param recursion_depth: number of recursive list decoding searches allowed, including this one
+    :param exact: use exact formulas or not
     """
 
-    if n is None:
+    if n_in:
+        n = n_in
+    else:
         n = 1
         while n < d:
             n = 2 * n
+        n = [n-1]
 
-    k = k if k else int(MagicConstants.k_div_n * (n - 1))
-    theta = theta1 if theta1 else mp.pi / 3
-    pr = load_probabilities(d, n - 1, k)
+    k = k_in if k_in else [int(MagicConstants.k_div_n * (n[0]))]
+    theta = theta_in if theta_in else mp.pi / 3
+    pr = load_probabilities(d, n[0], k[0], compute = True)
 
-    def cost(pr, T1):
-        eta = 1 - ngr_pf(pr.d, pr.n, pr.k, beta=T1) / ngr(pr.d, beta=T1)
-        T2 = T1
-        N = 2 / ((1 - eta) * C(d, mp.pi / 3))
-        W0 = W(d, T1, T2, mp.pi / 3)
-        filters = 1.0 / W0
+    def cost(pr, T1,local_list_size, _exact):
+        sub_results = []
 
-        m = log2(d)
-        ip_cost = d/m * MagicConstants.word_size ** 2
+        C0 = C(d,kappangle)
+        W0 = Wmatched(d, T1[0], kappangle,_exact) #
+        CT1 = C(d,T1[0])
 
-        Z = filters**(1/m) # number of vectors per subcode
-
-        # we assume a cost of one word addition (five gates per bit)
-        # + dealing with a pointer into asubcode per iteration node.
-        COST_TREE_ITER    = 5 * MagicConstants.word_size + log2(Z)
-        # we assume a cost of one word operation for the sorting + dealing with a pointer
-        COST_COMPARE_SWAP = MagicConstants.word_size + log2(Z)
-
-        # cost of inner products and cost of sorting the lists
-        preprocess_cost = m * Z * ip_cost  +  m * Z * log2(Z) * COST_COMPARE_SWAP
-
-        # We assume the enumeration procedure from the "Report on the Security of LWE: Improved Dual
-        # Lattice Attack" https://doi.org/10.5281/zenodo.6412487 such that number of enumeration
-        # nodes is a constant multiple of the number of solutions.
-
-        insert_cost = preprocess_cost + filters * C(d , T2) * COST_TREE_ITER
-        query_cost  = preprocess_cost + filters * C(d , T1) * COST_TREE_ITER
-        bucket_size = (filters * C(d, T1)) * (N * C(d, T2))
-
-        if metric in ClassicalMetrics:
-            look_cost = classical_popcount_costf(pr.n, pr.k, metric)
-            looks_per_bucket = bucket_size
-            search_one_cost = ClassicalCosts(
-                label="search",
-                gates=look_cost.gates * looks_per_bucket,
-                depth=look_cost.depth * looks_per_bucket,
-            )
+        # This computation is *so* slow, especially for large beta
+        # that we simply ignore it for optimizing
+        
+        if _exact and not optimize:
+            eta = 1 - ngr_pf(pr.d, pr.n, pr.k, beta=T1[0], integrate=_exact) / ngr(pr.d, beta=T1[0],kappangle=kappangle,integrate=_exact)# some sort of probabilistic constant?
+            if eta < 0:
+                print("Eta problem: ",eta)
+                print(ngr(pr.d, beta=T1[0],kappangle=kappangle,integrate=_exact))
+                print(ngr_pf(pr.d, pr.n, pr.k, beta=T1[0], integrate=_exact))
+                eta = 0
         else:
-            look_cost = popcount_grover_iteration_costf(bucket_size, pr.n, pr.k, metric)
-            looks_per_bucket = bucket_size ** (1 / 2.0)
-            search_one_cost = compose_k_sequential(look_cost, looks_per_bucket)
+            eta = 0.75
+        if not local_list_size:
+            local_list_size = 2 / ((1 - eta) * C0) # list size
+        
 
-        search_cost = raw_cost(search_one_cost, metric)
-        return N * insert_cost + N * query_cost + N * search_cost, search_one_cost, eta
 
-    if optimize:
-        theta = local_min(lambda T: cost(pr, T)[0], low=mp.pi / 6, high=mp.pi / 2)
-        positive_rate = pf(pr.d, pr.n, pr.k, beta=theta)
-        while not popcounts_dominate_cost(positive_rate, pr.d, pr.n, metric):
-            try:
-                pr = load_probabilities(
-                    pr.d, 2 * (pr.n + 1) - 1, int(MagicConstants.k_div_n * (2 * (pr.n + 1) - 1))
-                )
-            except PrecomputationRequired as e:
-                if allow_suboptimal:
-                    break
+        list_memory = local_list_size*(d*MagicConstants.word_size + n[0]) # using 32 bits for each element of each vector
+                                   # plus n bits to keep pre-computed popcounts with the vector
+        # Guess at a code size to match the size of the list
+        #  total bucket elements = (code_size * C(d, T1)) * N
+        #  each element is one vector (d*32 bits) and one codeword is a hash, let's say 2*lg(C)+20 
+        #  thus we want N*(d*32) = code_size * C(d,T1) * N * C(d,T2) * (2*lg(C) + 20)
+        #  We approximate as follows:
+        matched_code_size = (d*MagicConstants.word_size)/(CT1*(2*log2((d*MagicConstants.word_size)/CT1)+MagicConstants.COLLISION_BUFFER))
+        # Re-calculate the actual bucket sizes
+        one_bucket_size = max(local_list_size * CT1,1)
+        
+        # Step one: Get the cost to search one bucket
+        if metric in ClassicalMetrics:
+            # Try if a recursion works
+            # This will be the new criteria for when vectors are reducing
+            alpha_sq = mp.cos(T1[0])**2
+            new_kappangle = mp.acos((mp.cos(kappangle) - alpha_sq)/(1-alpha_sq)) 
+            # The kappangle check ensures we have not jumped out of a feasible range 
+            if recursion_depth > 1 and new_kappangle > 0 and new_kappangle < mp.pi / 2:
+                # First: we need to compute the vector proj_c(v) for each codeword c
+                projection_cost = one_bucket_size*d* MagicConstants.word_size ** 2
+                # Then we search the projections for reducing pairs
+                # If we were given n, k, theta, code_size, this uses the remaining values
+                recursion_cost_full = list_decoding_internal(
+                    d=d-1, 
+                    n_in=n_in[1:] if n_in else None, 
+                    k_in=k_in[1:] if k_in else None,
+                    theta_in=T1[1:],
+                    given_code_size = given_code_size[1:] if given_code_size else given_code_size,
+                    optimize = optimize, 
+                    metric = metric, 
+                    allow_suboptimal = allow_suboptimal, 
+                    list_size = one_bucket_size,
+                    kappangle=new_kappangle, 
+                    recursion_depth = recursion_depth - 1,
+                    exact = _exact)
+                recursion_cost = 2.**recursion_cost_full[4] + projection_cost
+                # This takes the search cost to be the recursive cost
+                # If this is suboptimal (i.e., we're better off with a naive search)
+                # this will ignore that fact!
+                sub_results = recursion_cost_full
+                search_cost = recursion_cost
+                # Adjustment based on false positive rate, which we assume is at most 0.5
+                if optimize:
+                    search_cost *= 2
                 else:
-                    raise e
-            theta = local_min(lambda T: cost(pr, T)[0], low=mp.pi / 6, high=mp.pi / 2)
-            positive_rate = pf(pr.d, pr.n, pr.k, beta=theta)
-    else:
-        positive_rate = pf(pr.d, pr.n, pr.k, beta=theta)
+                    search_cost /= p_recursion_hit(d, T1[0], kappangle)
+            else:
+                # Finished recursing; just take the exhaustive search cost
+                look_cost = classical_popcount_costf(pr.n, pr.k, metric)
+                looks_per_bucket = max(1,one_bucket_size*(one_bucket_size-1)/2)
+                search_one_cost = ClassicalCosts(
+                    label="search",
+                    gates=look_cost.gates * looks_per_bucket,
+                    depth=look_cost.depth * looks_per_bucket,
+                )
+                search_cost = raw_cost(search_one_cost, metric)
+                sub_results = float(log2(search_cost))
+        else:
+            raise ValueError("Quantum cost metrics no longer supported")
 
-    fc, dc, eta = cost(pr, theta)
+        # Step 2: Find the best code size
+        # Notice that the search cost per bucket is independent of the code size; that's
+        # why we already computed it.
+        # Here we will define a separate function to compute the cost for each code, then
+        # optimize for that
+        # First, compute some values that do not depend on code size
+        necessary_solutions = C0*local_list_size*(local_list_size - 1)/2 # expected number of reducing pairs
+        def cost_per_code(pr,T1,local_list_size,local_code_size, _code_exact):
+            # Compute memory for all the buckets
+            all_buckets_size = local_code_size * one_bucket_size
+            bucket_memory = all_buckets_size * (2*log2(local_code_size) + MagicConstants.COLLISION_BUFFER)
+
+            filters = local_code_size # previously: 1.0 / W0
+
+            # We expect the number of results per code to be 
+            # local_code_size * (bucket size choose 2) * prob[two vectors reduce | two vectors in same bucket]
+            # The probability is equal to W0 * C(d,kappangle) / C(d,T1[0])**2
+            # The bucket size equals local_list_size * C(d,T1[0])
+            # So the C(d,T1[0]) factors cancel out, except for a factor of 2
+            # The reason we cancel out instead of using the actual bucket size
+            # is that the bucket size is taken as at least 1 for memory management,
+            # and this would falsely assume bucket sizes less than 1 on average can 
+            # produce as many reducing vectors as a bucket of size 1
+            solutions_per_code = local_code_size * local_list_size**2 * W0 * C0 / 2
+            # We need a certain number of codes
+            # We use binomial Chernoff bounds with the slightly erroneous assumption
+            # that pairs of vectors are independently likely to be a reducing pair
+            b = 3*mp.log(MagicConstants.PROB_MIN) - 2*necessary_solutions
+            necessary_exp_val  = (-b + mp.sqrt(b**2 - 4*necessary_solutions**2))/2
+            num_codes = max(1.0, necessary_exp_val/solutions_per_code)
+
+
+            # Memory cost
+            if metric == "hardware_time":
+                # 2-D sort cost 
+                mem_cost = pow(bucket_memory,1.5)* MagicConstants.BIT_OPS_PER_SORT_BIT
+                mem_cost += pow(list_memory,1.5)* MagicConstants.BIT_OPS_PER_SORT_BIT
+                # Basic sort cost, for small sizes
+                mem_cost += bucket_memory*log2(bucket_memory)*MagicConstants.SORT_CONSTANT
+                mem_cost += list_memory*log2(list_memory)*MagicConstants.SORT_CONSTANT
+            else:
+                mem_cost = 0
+
+            # We optimize for the number of random products in the random product code
+            # "Optimize" means decrease m until it is close to the memory cost
+            
+            def cost_to_filter(_m):
+                # Cost of an inner product with the code words
+                ip_cost = d/_m * MagicConstants.word_size ** 2
+                Z = filters**(1/_m) # number of vectors per subcode
+
+                # we assume a cost of one word addition (five gates per bit)
+                # + dealing with a pointer into asubcode per iteration node.
+                COST_TREE_ITER    = 5 * MagicConstants.word_size + log2(Z)
+                # we assume a cost of one word operation for the sorting + dealing with a pointer
+                COST_COMPARE_SWAP = MagicConstants.word_size + log2(Z)
+
+                # cost of inner products and cost of sorting the lists
+                preprocess_cost = _m * Z * ip_cost  +  _m * Z * log2(Z) * COST_COMPARE_SWAP
+
+                # We assume the enumeration procedure from the "Report on the Security of LWE: Improved Dual
+                # Lattice Attack" https://doi.org/10.5281/zenodo.6412487 such that number of enumeration
+                # nodes is a constant multiple of the number of solutions.
+
+                insert_cost = preprocess_cost + filters * CT1 * COST_TREE_ITER
+                return insert_cost
+
+            # Binary search for lowest possible m
+            # We want the filter cost to be at most 
+            # 1/4 the memory cost, with "1/4"
+            # an arbitrary constant just to keep costs low
+            m=int(log2(d))
+            if metric == "hardware_time":
+                high_m = int(log2(d))
+                low_m = 1
+                while high_m - low_m > 1:
+                    m = int((high_m + low_m)/2)
+                    if local_list_size*cost_to_filter(m) < mem_cost/4:
+                        high_m = m
+                    else:
+                        low_m = m
+                if local_list_size*cost_to_filter(m) >= mem_cost/4:
+                    m = m+1
+            filter_cost = cost_to_filter(m)
+
+            # Quick sanity checks
+            if local_list_size < 0:
+                raise ValueError("LIST SIZE ERROR")
+            elif filter_cost < 0:
+                raise ValueError("FILTER COST ERROR")
+
+            # Return basic parameters
+            return [num_codes,local_list_size*filter_cost,mem_cost], m
+
+        # This does a binary search for the code
+        # if no code size is provided
+        if given_code_size is None:
+            if metric=="hardware_time":
+                # No reason to use a smaller code
+                # than this if we're counting memory
+                low_code = matched_code_size
+            else:
+                low_code = 1
+            high_code = 1/W0
+            
+            while abs(log2(low_code) - log2(high_code)) > 1:
+                mid_code = int((low_code+high_code)/2)
+                # When we're in the initial steps of the search,
+                # it is pointless to use expensive, high-precision
+                # computations, so code_exact suppresses this
+                code_exact = (abs(log2(low_code) - log2(high_code)) < 1)
+                costs = cost_per_code(pr,T1, local_list_size,mid_code, code_exact and _exact)[0]
+                # We know that the memory cost increases with code size
+                # We know that the insertion/query cost decreases, then increases marginally with code size
+                # We know that the search cost decreases, then plateaus with code size
+                # So if memory cost is biggest => decrease code
+                # If search is biggest => increase code
+                # If insertion/query is biggest => still increase code
+                if costs[0]*costs[2] > costs[0]*max(costs[1],search_cost*mid_code):
+                    high_code = mid_code
+                else:
+                    low_code = mid_code
+            best_code_size = low_code
+        else:
+            best_code_size = given_code_size[0]
+
+        # Sanity checks
+        if best_code_size < 0:
+            raise ValueError("CODE SIZE ERROR")
+        if search_cost < 0:
+            raise ValueError("SEARCH COST ERROR")
+
+        # Final call to get the actual cost
+        (costs,m) = cost_per_code(pr, T1, local_list_size,best_code_size,_exact)
+
+        # These are the costs and parameters for one value of the filter angle T1 
+        return costs+[best_code_size*search_cost], m, eta, best_code_size, sub_results
+
+    # Step 3: optimize theta (if necessary) and compute the cost in that case
+    if optimize:
+        # We won't rely on the built-in optimizer because we know more about the structure
+        # The filter costs decrease in theta
+        # Memory costs decrease in theta
+        # Search costs have a local minimum (which may be less than 0)
+        # Thus: we first find the local minimum of the search costs
+        # We then increase theta until the search costs match the first two
+
+        low_theta = mp.pi / 6
+        high_theta = mp.pi / 2
+        second_high_theta = high_theta # for second optimization loop
+        theta=low_theta
+        past_local_min = False
+        # Combo search:
+        # Configure progress bar:
+        if DisplayConfig.display:
+            pbar_length = log2(high_theta - low_theta)
+            pbar = tqdm(total=int(pbar_length - log2(1e-5)), leave=False, desc = str("Theta ")+str(recursion_depth))
+        while abs(high_theta - low_theta) > 1e-5:
+            # For early iterations, we reduce accuracy of the sub-computation
+            theta_exact = (abs(high_theta - low_theta) < 1e-1)
+            theta = (low_theta+high_theta)/2
+            # Hacky way to find local min: perturb theta by 1e-5, check if it 
+            # increased or decreased cost
+            costs_1 = cost(pr,[theta],list_size,theta_exact and exact)[0]
+            # No need to do a second check if we're already decreasing
+            if past_local_min:
+                if costs_1[3] < max(costs_1[1],costs_1[2]):
+                    # search increasing but not maximum, should increase
+                    # this also means we have passed the local minimum
+                    low_theta = theta
+                else:
+                    high_theta = theta
+            else:
+                costs_2 = cost(pr,[theta+1e-6],list_size, theta_exact and exact)[0]
+                if costs_2[3]*costs_2[0] < costs_1[3]*costs_1[0]:
+                    # decreasing, too small
+                    low_theta = theta
+                elif costs_1[3] < max(costs_1[1],costs_1[2]):
+                    # search increasing but not maximum, should increase
+                    # this also means we have passed the local minimum
+                    past_local_min = True
+                    low_theta = theta
+                else:
+                    high_theta = theta
+            if DisplayConfig.display:
+                pbar.update(1)
+        if DisplayConfig.display:
+            pbar.close()
+
+        # # First search: local minimum
+        # # Configure progress bar:
+        # pbar_length = log2(high_theta - low_theta)
+        # pbar = tqdm(total=int(pbar_length - log2(1e-5)), leave=False, desc = str("Theta ")+str(recursion_depth) + str(" 1st loop"))
+        # while abs(high_theta - low_theta) > 1e-5:
+        #     # For early iterations, we reduce accuracy of the sub-computation
+        #     theta_exact = (abs(high_theta - low_theta) < 1e-1)
+        #     theta = (low_theta+high_theta)/2
+        #     # Hacky way to find local min: perturb theta by 1e-5, check if it 
+        #     # increased or decreased cost
+        #     costs_1 = cost(pr,[theta],list_size,theta_exact and exact)[0]
+        #     costs_2 = cost(pr,[theta+1e-5],list_size, theta_exact and exact)[0]
+        #     if costs_2[3]*costs_2[0] > costs_1[3]*costs_1[0]:
+        #         # increasing, too far
+        #         high_theta = theta
+        #     else:
+        #         low_theta = theta
+        #     # We can save time on the second loop by using intermediate results
+        #     # This upper bounds the crossover point
+        #     if costs_1[3] >= max(costs_1[1],costs_1[2]):
+        #         second_high_theta = theta
+        #     pbar.update(1)
+        # pbar.close()
+
+        # # Now we have the minimum value for search
+        # # Since search increases after this point, we find the crossover
+        # high_theta = mp.pi / 2
+        # pbar_length = log2(high_theta - low_theta)
+        # pbar = tqdm(total=int(pbar_length - log2(1e-5)), leave=False, desc = str("Theta ")+str(recursion_depth) + str(" 2nd loop"))
+        # while abs(low_theta - high_theta) > 1e-5:
+        #     theta_exact = (abs(high_theta - low_theta) < 1e-1)
+        #     theta = (low_theta+high_theta)/2
+        #     costs = cost(pr,[theta],list_size,theta_exact and exact)[0]
+        #     if costs[3] < max(costs[1],costs[2]):
+        #         # still too low
+        #         low_theta = theta
+        #     else:
+        #         high_theta = theta
+        #     pbar.update(1)
+        # pbar.close()
+        
+        theta = [theta]
+
+    # If we're optimizing, we do not care about the false positive rate
+    if optimize:
+        positive_rate = 1
+    else:
+        positive_rate = pf(pr.d, pr.n, pr.k, beta=theta[0],integrate = exact)
+    if not n_in:
+        # If we were not explicitly given popcount parameters,
+        # we attempt to optimize them
+        # Too many filters makes too much computation, but too few requires
+        # too many re-computations
+        # Modified from the original to not re-optimize theta
+        # Rough idea: the cost barely changes with alternative pop-count figures
+        # So we are not going to bother re-optimizing: it would be far too slow
+        while not popcounts_dominate_cost(positive_rate, pr.d, pr.n, metric):
+            pr = load_probabilities(
+                pr.d, 2 * (pr.n + 1) - 1, int(MagicConstants.k_div_n * (2 * (pr.n + 1) - 1))
+                , compute=True
+            )
+            positive_rate = pf(pr.d, pr.n, pr.k, beta=theta[0])
+
+    # All optimization is done, we now call the result
+    '''
+        all_costs: an array of 4 elements:
+            - number of codes
+            - filter cost
+            - memory cost
+            - search cost
+        m: optimal m for product code
+        eta: fraction of reducing vectors found by popcount filters
+        code_size: the code size
+        sub_results: list_decoding results from any recursive calls
+    '''
+    all_costs, m, eta, code_size, sub_results = cost(pr, theta,list_size, exact)
+
+    # full cost
+    fc = all_costs[0]*(all_costs[1]+all_costs[2]+all_costs[3])
 
     return ListDecodingResult(
         d=pr.d,
         n=pr.n,
         k=pr.k,
-        theta1=float(theta),
-        theta2=float(theta),
-        log_cost=float(log2(fc)),
+        theta=float(theta[0]),
+        log_cost=log2(fc),
+        code_size = log2(code_size),
         pf_inv=int(1 / positive_rate),
         eta=eta,
         metric=metric,
-        detailed_costs=dc,
+        m=m,
+        num_codes = float(log2(all_costs[0])),
+        filter_cost = float(log2(all_costs[1])),
+        memory_cost = float(log2(all_costs[2])),
+        search_cost = sub_results,
     )
 
+
+def list_decoding_title(recursion_depth):
+    title = ["dimension", "metric","memory_cost","recursion_depth","total cost"]
+    for i in range(recursion_depth):
+        next_row = ["n","k","theta", "code_size", "num_codes","m", "filter_cost","memory_cost", "search_cost"]
+        title += [header + "_" + str(i) for header in next_row]
+    return title
+
+def list_decoding_as_list(ld):
+    print(ld)
+    csv_row = [ld[0],ld[8],MagicConstants.BIT_OPS_PER_SORT_BIT]
+    sub_row = [float(ld[4])]
+    flag = True
+    depth = 0
+    while flag:
+        depth += 1
+        sub_row += [ld[1], ld[2], ld[3], float(ld[5]), ld[10],ld[11], ld[12]]
+        search_cost = ld[5]
+        flag = (type(ld[13]) == ListDecodingResult) # is the search cost another listdecoding?
+        if flag:
+            search_cost += ld[13][4] # check the total cost of the subroutine
+        else:
+            search_cost += ld[13] # search cost is given directly
+        sub_row += [float(search_cost)]
+        ld = ld[13]
+    return csv_row + [depth] + sub_row 
 
 SieveSizeResult = namedtuple("SieveSizeResult", ("d", "log2_size", "metric", "detailed_costs"))
 
@@ -862,3 +1284,4 @@ def sieve_size(d, metric=None):
     elif metric == "bits":
         log2_size = log2(N) + log2(d)
     return SieveSizeResult(d=d, log2_size=log2_size, metric=metric, detailed_costs=(0,))
+

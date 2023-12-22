@@ -120,7 +120,9 @@ def load_bundle(d, n, compute=False):
             return bundle
     except IOError:
         if compute:
-            return create_bundle(d, n, prec=int(compute))
+            bundle = create_bundle(d, n, prec=int(compute))
+            store_bundle(bundle)
+            return bundle
         else:
             raise PrecomputationRequired("d: {d}, n: {n}".format(d=d, n=n))
 

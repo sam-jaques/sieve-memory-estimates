@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+class MultiProcessingConfig:
+    num_cores = 1
 
 class MagicConstants:
 
@@ -30,3 +32,20 @@ class MagicConstants:
     """
 
     word_size = 32
+
+
+    """
+    Memory magic constants
+
+    """
+    BIT_OPS_PER_SORT_BIT =  2.0**(-19.8)
+    # To make a hash map of a list of size N with no collisions
+    # we take a hash of 2lg(N)+COLLISION_BUFFER bits
+    # and assume no collisions
+    COLLISION_BUFFER = 20
+
+    # Sorting should cost SORT_CONSTANT * N * log(N,2) at least
+    SORT_CONSTANT = 1.39
+
+    # Acceptable probability of insufficient reducing vectors
+    PROB_MIN = 0.01
