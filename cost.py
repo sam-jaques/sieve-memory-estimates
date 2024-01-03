@@ -780,6 +780,7 @@ Nearest Neighbor Search via a decodable buckets as in BDGL16.
 :param n: number of entries in popcount filter
 :param k: we accept if two vectors agree on ≤ k
 :param theta: array of filter creation angle
+:param given_code_size: array of code sizes to use
 :param optimize: optimize `n` and `theta`
 :param metric: target metric
 :param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters
@@ -856,6 +857,7 @@ def list_decoding_internal(
     :param n: number of entries in popcount filter
     :param k: we accept if two vectors agree on ≤ k
     :param theta_in: array of filter creation angle
+    :param given_code_size: array of code sizes to use
     :param optimize: optimize `n` and `theta`
     :param metric: target metric
     :param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters
@@ -996,11 +998,11 @@ def list_decoding_internal(
             # Memory cost
             if metric == "hardware_time":
                 # 2-D sort cost 
-                mem_cost = pow(bucket_memory,1.5)* MagicConstants.BIT_OPS_PER_SORT_BIT
-                mem_cost += pow(list_memory,1.5)* MagicConstants.BIT_OPS_PER_SORT_BIT
+                mem_cost = pow(bucket_memory,1+MagicConstants.SORT_EXPONENT_DELTA)
+                mem_cost += pow(list_memory,1+MagicConstants.SORT_EXPONENT_DELTA)
+                mem_cost *= MagicConstants.BIT_OPS_PER_SORT_BIT
                 # Basic sort cost, for small sizes
-                mem_cost += bucket_memory*log2(bucket_memory)*MagicConstants.SORT_CONSTANT
-                mem_cost += list_memory*log2(list_memory)*MagicConstants.SORT_CONSTANT
+                mem_cost += (bucket_memory*log2(bucket_memory)+list_memory*log2(list_memory))*MagicConstants.SORT_CONSTANT
             else:
                 mem_cost = 0
 
@@ -1107,13 +1109,14 @@ def list_decoding_internal(
         # Search costs have a local minimum (which may be less than 0)
         # Thus: we first find the local minimum of the search costs
         # We then increase theta until the search costs match the first two
+        # This binary search checks both conditions simultaneously
 
         low_theta = mp.pi / 6
         high_theta = mp.pi / 2
         second_high_theta = high_theta # for second optimization loop
         theta=low_theta
         past_local_min = False
-        # Combo search:
+    
         # Configure progress bar:
         if DisplayConfig.display:
             pbar_length = log2(high_theta - low_theta)
@@ -1150,46 +1153,7 @@ def list_decoding_internal(
         if DisplayConfig.display:
             pbar.close()
 
-        # # First search: local minimum
-        # # Configure progress bar:
-        # pbar_length = log2(high_theta - low_theta)
-        # pbar = tqdm(total=int(pbar_length - log2(1e-5)), leave=False, desc = str("Theta ")+str(recursion_depth) + str(" 1st loop"))
-        # while abs(high_theta - low_theta) > 1e-5:
-        #     # For early iterations, we reduce accuracy of the sub-computation
-        #     theta_exact = (abs(high_theta - low_theta) < 1e-1)
-        #     theta = (low_theta+high_theta)/2
-        #     # Hacky way to find local min: perturb theta by 1e-5, check if it 
-        #     # increased or decreased cost
-        #     costs_1 = cost(pr,[theta],list_size,theta_exact and exact)[0]
-        #     costs_2 = cost(pr,[theta+1e-5],list_size, theta_exact and exact)[0]
-        #     if costs_2[3]*costs_2[0] > costs_1[3]*costs_1[0]:
-        #         # increasing, too far
-        #         high_theta = theta
-        #     else:
-        #         low_theta = theta
-        #     # We can save time on the second loop by using intermediate results
-        #     # This upper bounds the crossover point
-        #     if costs_1[3] >= max(costs_1[1],costs_1[2]):
-        #         second_high_theta = theta
-        #     pbar.update(1)
-        # pbar.close()
-
-        # # Now we have the minimum value for search
-        # # Since search increases after this point, we find the crossover
-        # high_theta = mp.pi / 2
-        # pbar_length = log2(high_theta - low_theta)
-        # pbar = tqdm(total=int(pbar_length - log2(1e-5)), leave=False, desc = str("Theta ")+str(recursion_depth) + str(" 2nd loop"))
-        # while abs(low_theta - high_theta) > 1e-5:
-        #     theta_exact = (abs(high_theta - low_theta) < 1e-1)
-        #     theta = (low_theta+high_theta)/2
-        #     costs = cost(pr,[theta],list_size,theta_exact and exact)[0]
-        #     if costs[3] < max(costs[1],costs[2]):
-        #         # still too low
-        #         low_theta = theta
-        #     else:
-        #         high_theta = theta
-        #     pbar.update(1)
-        # pbar.close()
+        
         
         theta = [theta]
 
@@ -1238,7 +1202,7 @@ def list_decoding_internal(
         log_cost=log2(fc),
         code_size = log2(code_size),
         pf_inv=int(1 / positive_rate),
-        eta=eta,
+        eta=float(eta),
         metric=metric,
         m=m,
         num_codes = float(log2(all_costs[0])),
@@ -1248,22 +1212,25 @@ def list_decoding_internal(
     )
 
 
+# Returns a list of headers for a csv file
+# It includes extra columns based on the total depth of recursion
 def list_decoding_title(recursion_depth):
     title = ["dimension", "metric","memory_cost","recursion_depth","total cost"]
     for i in range(recursion_depth):
-        next_row = ["n","k","theta", "code_size", "num_codes","m", "filter_cost","memory_cost", "search_cost"]
+        next_row = ["n","k","theta", "code_size","m","eta","pf_inv", "num_codes", "filter_cost","memory_cost", "search_cost"]
         title += [header + "_" + str(i) for header in next_row]
     return title
 
+# Given a ListDecodingResult argument, returns a list of results
+# in the expected order to be output to CSV
 def list_decoding_as_list(ld):
-    print(ld)
     csv_row = [ld[0],ld[8],MagicConstants.BIT_OPS_PER_SORT_BIT]
     sub_row = [float(ld[4])]
     flag = True
     depth = 0
     while flag:
         depth += 1
-        sub_row += [ld[1], ld[2], ld[3], float(ld[5]), ld[10],ld[11], ld[12]]
+        sub_row += [ld[1], ld[2], ld[3], float(ld[5]), ld[9],ld[7],ld[6], ld[10],ld[11], ld[12]]
         search_cost = ld[5]
         flag = (type(ld[13]) == ListDecodingResult) # is the search cost another listdecoding?
         if flag:

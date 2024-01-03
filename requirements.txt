@@ -1,4 +1,5 @@
 mpmath
 numpy
 scipy
-click
+tqdm
+matplotlib

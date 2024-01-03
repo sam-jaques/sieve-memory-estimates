@@ -158,6 +158,7 @@ def W(d, alpha, beta, theta, integrate=True, prec=None):
             r = (d-4) * mp.log(mp.sqrt(1-g_sq), 2) + log2_A - 2*mp.log(d-4, 2) + log2_sphere(d-2) - log2_sphere(d)
             return 2**r
 
+# Same as W, but optimized for the case of alpha=beta
 @memoize
 def Wmatched(d, alpha, theta, integrate=True, prec=None):
     assert alpha <= mp.pi / 2
@@ -217,7 +218,8 @@ def Wmatched(d, alpha, theta, integrate=True, prec=None):
 
 # Probability that, given two vectors with inner product at least ck,
 # a randomly chosen unit vector will be at angle at most alpha with
-# both
+# both. The difference with the function `W` is that the `W` assumes
+# the inner product is *exactly* ck
 @memoize
 def Wfull(d,alpha,ck,prec=53):
     def f(x,y):
@@ -270,8 +272,11 @@ def p_hit_kappa(d,alpha,ck,kappangle,prec=53):
 
     return mp.quad(f, [0,alpha],[0,alpha],error=True)
 
-# Computes the probability that two vectors at 
-# an angle kappa will be 
+# Computes the "false negative" probability
+# of the recursion; i.e., the probability
+# that two vectors in a filter bucket of angle
+# theta, which are at angle kappangle with each other,
+# will not be detected by the recursive subroutine
 @memoize
 def p_recursion_hit(d, alpha, kappangle):
     alpha_sq = mp.cos(alpha)**2

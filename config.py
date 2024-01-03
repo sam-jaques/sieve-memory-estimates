@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+# Acts as a global variable for the number of cores to use when 
+# multithreading
 class MultiProcessingConfig:
     num_cores = 1
 
@@ -38,6 +40,8 @@ class MagicConstants:
     Memory magic constants
 
     """
+    SORT_EXPONENT_DELTA = 0.5
+
     BIT_OPS_PER_SORT_BIT =  2.0**(-19.8)
     # To make a hash map of a list of size N with no collisions
     # we take a hash of 2lg(N)+COLLISION_BUFFER bits

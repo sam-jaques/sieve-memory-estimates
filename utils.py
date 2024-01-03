@@ -170,6 +170,61 @@ def __bulk_cost_estimate(args):
         raise e
 
 
+def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename = None, exact=True, ncores = 1, **kwds):
+    """
+    Run cost estimates and write to csv file.
+
+    :param mem_cost: a constant for how much a sort should cost or an iterable of those
+    :param depths: an iterable of recursion depths to estimate
+    :param D: an iterable of dimensions to run ``list_decoding`` on
+    :param metric: a metric from ``Metrics`` or an iterable of such metrics
+    :param filename: csv filename to write to (must accept "{exact}" placeholder)
+    :param exact: if true, computes exact results; if false, computes approximate results
+    :param ncores: number of CPU cores to use
+    :returns: ``None``, but files are written to disk.
+
+    """
+    from cost import LogicalCosts, ClassicalCosts, ClassicalMetrics, SizeMetrics
+
+    
+    try:
+        for mem_cost_ in mem_cost:
+            new_bulk_cost_estimate(mem_cost_, mem_exponent, depths, D, metric, ncores = 1, **kwds)
+        return
+    except TypeError:
+        pass
+
+    try:
+        for mem_exponent_ in mem_exponent:
+            new_bulk_cost_estimate(mem_cost, mem_exponent_, depths, D, metric, ncores = 1, **kwds)
+        return
+    except TypeError:
+        pass
+
+    if not isinstance(metric, str):
+        for metric_ in metric:
+            new_bulk_cost_estimate(mem_cost, mem_exponent,depths, D, metric_, ncores = 1, **kwds)
+        return
+
+    from config import MultiProcessingConfig, MagicConstants
+    MultiProcessingConfig.num_cores = ncores
+    MagicConstants.BIT_OPS_PER_SORT_BIT = mem_cost
+    MagicConstants.SORT_EXPONENT_DELTA = mem_exponent
+
+
+    if filename is None:
+        filename = os.path.join("data", "{exact}-cost-estimate-{delta}.csv")
+    exact_filename = filename.format(exact="exact",delta=mem_exponent)
+    approximate_filename = filename.format(exact="approximate",delta=mem_exponent)
+
+    if exact:
+        from exact import compute_exact_costs
+        compute_exact_costs(D, depths, mem_cost, metric, exact_filename, approximate_filename)
+    else:
+        from approximate import compute_approximate_costs
+        compute_approximate_costs(D, depths, mem_cost, metric, approximate_filename)
+
+
 def bulk_cost_estimate(f, D, metric, filename=None, ncores=1, **kwds):
     """
     Run cost estimates and write to csv file.
@@ -195,6 +250,8 @@ def bulk_cost_estimate(f, D, metric, filename=None, ncores=1, **kwds):
         for metric_ in metric:
             bulk_cost_estimate(f, D, metric_, ncores=ncores, **kwds)
         return
+
+
 
     from multiprocessing import Pool
 
