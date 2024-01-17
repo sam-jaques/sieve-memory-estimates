@@ -1063,7 +1063,7 @@ def list_decoding_internal(
         # if no code size is provided
         if given_code_size is None:
             low_code = 1
-            high_code = 1/W0
+            high_code = int(1/W0)
             if _exact:
                 code_bound = 1e-3
             else:
