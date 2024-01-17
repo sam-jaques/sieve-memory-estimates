@@ -4,11 +4,10 @@ import sys
 from utils import bulk_create_and_store_bundles, bulk_cost_estimate, new_bulk_cost_estimate
 from cost import all_pairs, random_buckets, list_decoding, sieve_size, Metrics, SizeMetrics
 from texconstsf import main as texconstsff
-# import click
 
 import argparse
-# defined command line options
-# this also generates --help and error handling
+
+# Add required command line arguments
 CLI=argparse.ArgumentParser()
 CLI.add_argument(
   "--ds", 
@@ -58,9 +57,9 @@ CLI.add_argument(
     default=0.5,
     help="Memory parameter Delta",
 )
-# parse the command line
-args = CLI.parse_args()
 
+# Parse and apply
+args = CLI.parse_args()
 new_bulk_cost_estimate(
     mem_cost = args.mem_cost, 
     mem_exponent = args.mem_exp,

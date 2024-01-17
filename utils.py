@@ -189,21 +189,21 @@ def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename =
     
     try:
         for mem_cost_ in mem_cost:
-            new_bulk_cost_estimate(mem_cost_, mem_exponent, depths, D, metric, ncores = 1, **kwds)
+            new_bulk_cost_estimate(mem_cost_, mem_exponent, depths, D, metric, exact=exact, ncores = ncores, **kwds)
         return
     except TypeError:
         pass
 
     try:
         for mem_exponent_ in mem_exponent:
-            new_bulk_cost_estimate(mem_cost, mem_exponent_, depths, D, metric, ncores = 1, **kwds)
+            new_bulk_cost_estimate(mem_cost, mem_exponent_, depths, D, metric, exact=exact, ncores = ncores, **kwds)
         return
     except TypeError:
         pass
 
     if not isinstance(metric, str):
         for metric_ in metric:
-            new_bulk_cost_estimate(mem_cost, mem_exponent,depths, D, metric_, ncores = 1, **kwds)
+            new_bulk_cost_estimate(mem_cost, mem_exponent,depths, D, metric_, exact=exact, ncores = ncores, **kwds)
         return
 
     from config import MultiProcessingConfig, MagicConstants

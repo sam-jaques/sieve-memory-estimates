@@ -1,4 +1,4 @@
-from cost import list_decoding, list_decoding_internal, Metrics, list_decoding_title, list_decoding_as_list
+from cost import list_decoding, list_decoding_internal, Metrics, list_decoding_title, list_decoding_as_list, log2
 from config import MagicConstants
 import csv
 import os.path
@@ -22,7 +22,7 @@ def load_approximate_costs(approx_filename):
                 ks = []
                 thetas = []
                 codes = []
-                for i in range(1,int(row['recursion_depth'])+1):
+                for i in range(int(row['recursion_depth'])):
                     ns.append(row['n_'+str(i)])
                     ks.append(row['k_'+str(i)])
                     thetas.append(row['theta_'+str(i)])
@@ -40,7 +40,7 @@ def get_exact_cost(args):
     thetas = None
     codes = None
     optimize = True
-    key = (str(d),metric,"{:.7f}".format(mem_cost),str(recursion_depth)) 
+    key = (str(d),metric,str(log2(mem_cost)),str(recursion_depth)) 
     if key in approximate_costs:
         ns = None
         ks = None
