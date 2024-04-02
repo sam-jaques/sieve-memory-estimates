@@ -12,27 +12,28 @@ from probabilities import DisplayConfig
 def get_approximate_costs(args):
     results = []
     for arg in args:
-        d,depth,metric = arg
+        d,depth,metric, exhaustive_size = arg
         n = 1
         while n < d:
             n = 2 * n
         n = n-1
         k = int(MagicConstants.k_div_n * (n))
-        results.append(list_decoding_internal(
+        results.append(list_decoding(
             d=d,
-            n_in=[n]*depth, 
-            k_in = [k]*depth, 
-            theta_in = None, 
+            n=[n]*depth, 
+            k = [k]*depth, 
+            theta = None, 
             given_code_size = None, 
+            optimize=False,
             fast = True, 
             metric=metric,
             allow_suboptimal=False,
             recursion_depth = depth, 
-            exact = True))
+            exhaustive_size = exhaustive_size))
     return results
 
 
-def compute_approximate_costs(ds, recursion_depths, mem_cost, metric, filename):
+def compute_approximate_costs(ds, recursion_depths, mem_cost, metric, filename,exhaustive_size = 0):
     output_file = open(filename,'a')
     writer = csv.writer(output_file)
     # This re-writes the headers; this is somewhat desirable
@@ -42,7 +43,7 @@ def compute_approximate_costs(ds, recursion_depths, mem_cost, metric, filename):
     ncores = min(MultiProcessingConfig.num_cores,len(ds)*len(recursion_depths))
     if ncores > 1:
         DisplayConfig.display = False
-    jobs = [(d, depth, metric) for d in ds for depth in recursion_depths]
+    jobs = [(d, depth, metric,exhaustive_size) for d in ds for depth in recursion_depths]
     # This splits the jobs up as evenly as it can
     # However, larger recursion depths are much longer-running
     # so typically there will be 1 or 2 threads that take a long

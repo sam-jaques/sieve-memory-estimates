@@ -786,6 +786,8 @@ Nearest Neighbor Search via a decodable buckets as in BDGL16.
 :param allow_suboptimal: when ``optimize=True``, return the best possible set of parameters
     given what is precomputed
 :param recursion_depth: number of recursive list decoding searches allowed, including this one
+:param exhaustive: will use the same theta in each recursion, and exhaustively search theta
+:param theta_prec: integer number of theta values to exhaustively check (between pi/3 and pi/3)
 
 This function is a wrapper function. If optimize is false, it calls 
 `list_decoding_internal` directly.
@@ -799,25 +801,56 @@ def list_decoding(
     k=None, 
     theta=None, 
     given_code_size=None, 
-    optimize=True, 
+    fast=False, 
+    optimize=True,
     metric="classical", 
     allow_suboptimal=False, 
-    recursion_depth = 1
+    recursion_depth = 1,
+    exhaustive_size = 0,    
 ): 
 
-    results =list_decoding_internal(
-        d=d,
-        n_in=n,
-        k_in=k,
-        theta_in=theta,
-        given_code_size=given_code_size,
-        fast=optimize,
-        metric=metric,
-        allow_suboptimal=allow_suboptimal,
-        list_size=None,
-        kappangle=mp.pi/3,
-        recursion_depth=recursion_depth,
-        exact=True)
+    # Check all theta 
+    if exhaustive_size > 0:
+        best_theta = None
+        results = None
+        best_cost=float('inf')
+        for theta in [mp.pi/3 + mp.pi/6*i/exhaustive_size for i in range(exhaustive_size)]:
+            theta_in = [theta]*recursion_depth
+            given_code_size = None
+            result = list_decoding_internal(
+                d=d,
+                n_in=None, 
+                k_in=None, 
+                theta_in=theta_in, 
+                given_code_size=None, 
+                fast=fast, 
+                metric=metric, 
+                allow_suboptimal=False, 
+                list_size = None, 
+                kappangle = mp.pi / 3, 
+                recursion_depth = recursion_depth,
+                exact = True
+            )
+            cost = float(result[4])
+            if cost < best_cost:
+                best_cost = cost
+                best_theta = theta
+                results = result
+    # Otherwise, use internal binary searches
+    else:
+        results =list_decoding_internal(
+            d=d,
+            n_in=n,
+            k_in=k,
+            theta_in=theta,
+            given_code_size=given_code_size,
+            fast=fast,
+            metric=metric,
+            allow_suboptimal=allow_suboptimal,
+            list_size=None,
+            kappangle=mp.pi/3,
+            recursion_depth=recursion_depth,
+            exact=True)
     if not optimize:
         return results
     # Unwrap the optimal parameters for each level of recursion
@@ -848,6 +881,7 @@ def list_decoding_internal(
     kappangle = mp.pi / 3, 
     recursion_depth = 1,
     exact = True,
+    current_depth = 0,
 ):
     """
     Nearest Neighbor Search via a decodable buckets as in BDGL16.
@@ -886,7 +920,7 @@ def list_decoding_internal(
         # This computation is *so* slow, especially for large beta
         # that we simply ignore it for optimizing
         
-        if _exact and not fast:
+        if _exact and not fast and current_depth == 0:
             eta = 1 - ngr_pf(pr.d, pr.n, pr.k, beta=T1[0], integrate=_exact) / ngr(pr.d, beta=T1[0],kappangle=kappangle,integrate=_exact)# some sort of probabilistic constant?
             if eta < 0:
                 print("Eta problem: ",eta)
@@ -935,7 +969,8 @@ def list_decoding_internal(
                     list_size = one_bucket_size,
                     kappangle=new_kappangle, 
                     recursion_depth = recursion_depth - 1,
-                    exact = _exact)
+                    exact = _exact,
+                    current_depth = current_depth+1)
                 recursion_cost = 2.**recursion_cost_full[4] + projection_cost
                 # This takes the search cost to be the recursive cost
                 # If this is suboptimal (i.e., we're better off with a naive search)
@@ -998,8 +1033,6 @@ def list_decoding_internal(
             # Memory cost
             if metric == "hardware_time":
                 # 2-D sort cost 
-                # print("---Depth ",recursion_depth,"code size",log2(local_code_size),"---")
-                # print(log2(list_memory),log2(bucket_memory))
                 mem_cost = pow(bucket_memory,1+MagicConstants.SORT_EXPONENT_DELTA)
                 mem_cost += pow(list_memory,1+MagicConstants.SORT_EXPONENT_DELTA)
                 mem_cost *= MagicConstants.BIT_OPS_PER_SORT_BIT
@@ -1069,6 +1102,7 @@ def list_decoding_internal(
             else:
                 code_bound = 1
             while abs(log2(low_code) - log2(high_code)) > code_bound and abs(high_code - low_code) > 1:
+
                 mid_code = int(mp.sqrt(low_code*high_code)+0.5)
                 # When we're in the initial steps of the search,
                 # it is pointless to use expensive, high-precision
@@ -1201,11 +1235,11 @@ def list_decoding_internal(
         theta = [theta]
 
     # If we're running this fast, we do not care about the false positive rate
-    if fast:
+    if fast or current_depth != 0:
         positive_rate = 1
     else:
         positive_rate = pf(pr.d, pr.n, pr.k, beta=theta[0],integrate = exact)
-    if not n_in and not fast:
+    if not n_in and not fast and current_depth == 0:
         # If we were not explicitly given popcount parameters,
         # we attempt to optimize them
         # Too many filters makes too much computation, but too few requires

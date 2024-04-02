@@ -170,7 +170,7 @@ def __bulk_cost_estimate(args):
         raise e
 
 
-def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename = None, exact=True, ncores = 1, **kwds):
+def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename = None, exact=True, ncores = 1, exhaustive_size = 0, **kwds):
     """
     Run cost estimates and write to csv file.
 
@@ -189,28 +189,27 @@ def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename =
     
     try:
         for mem_cost_ in mem_cost:
-            new_bulk_cost_estimate(mem_cost_, mem_exponent, depths, D, metric, exact=exact, ncores = ncores, **kwds)
+            new_bulk_cost_estimate(mem_cost_, mem_exponent, depths, D, metric, exact=exact, ncores = ncores,exhaustive_size = exhaustive_size, **kwds)
         return
     except TypeError:
         pass
 
     try:
         for mem_exponent_ in mem_exponent:
-            new_bulk_cost_estimate(mem_cost, mem_exponent_, depths, D, metric, exact=exact, ncores = ncores, **kwds)
+            new_bulk_cost_estimate(mem_cost, mem_exponent_, depths, D, metric, exact=exact, ncores = ncores,exhaustive_size = exhaustive_size, **kwds)
         return
     except TypeError:
         pass
 
     if not isinstance(metric, str):
         for metric_ in metric:
-            new_bulk_cost_estimate(mem_cost, mem_exponent,depths, D, metric_, exact=exact, ncores = ncores, **kwds)
+            new_bulk_cost_estimate(mem_cost, mem_exponent,depths, D, metric_, exact=exact, ncores = ncores,exhaustive_size = exhaustive_size, **kwds)
         return
 
     from config import MultiProcessingConfig, MagicConstants
     MultiProcessingConfig.num_cores = ncores
     MagicConstants.BIT_OPS_PER_SORT_BIT = mem_cost
     MagicConstants.SORT_EXPONENT_DELTA = mem_exponent
-
 
     if filename is None:
         filename = os.path.join("data", "{exact}-cost-estimate-{delta}.csv")
@@ -219,10 +218,10 @@ def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename =
 
     if exact:
         from exact import compute_exact_costs
-        compute_exact_costs(D, depths, mem_cost, metric, exact_filename, approximate_filename)
+        compute_exact_costs(D, depths, mem_cost, metric, exact_filename, approximate_filename,exhaustive_size)
     else:
         from approximate import compute_approximate_costs
-        compute_approximate_costs(D, depths, mem_cost, metric, approximate_filename)
+        compute_approximate_costs(D, depths, mem_cost, metric, approximate_filename,exhaustive_size)
 
 
 def bulk_cost_estimate(f, D, metric, filename=None, ncores=1, **kwds):

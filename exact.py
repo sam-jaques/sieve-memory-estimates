@@ -22,13 +22,15 @@ def load_approximate_costs(approx_filename):
                 ks = []
                 thetas = []
                 codes = []
-                for i in range(int(row['recursion_depth'])):
-                    ns.append(row['n_'+str(i)])
-                    ks.append(row['k_'+str(i)])
-                    thetas.append(row['theta_'+str(i)])
-                    codes.append(row['code_size_'+str(i)])
-                approximate_costs[(row['dimension'],row['metric'],row['memory_cost'],row['recursion_depth'])] = {"ns":ns,"ks":ks,"thetas":thetas,"codes":codes}
-
+                try:
+                    for i in range(int(row['recursion_depth'])):
+                        ns.append(row['n_'+str(i)])
+                        ks.append(row['k_'+str(i)])
+                        thetas.append(row['theta_'+str(i)])
+                        codes.append(row['code_size_'+str(i)])
+                    approximate_costs[(row['dimension'],row['metric'],row['memory_cost'],row['recursion_depth'])] = {"ns":ns,"ks":ks,"thetas":thetas,"codes":codes}
+                except KeyError:
+                    continue
 
 # Finds a single exact cost
 # It tries to use a result from an approximate cost, if it exists
@@ -56,6 +58,7 @@ def get_exact_cost(args):
         k=ks, 
         theta=thetas, 
         given_code_size=codes, 
+        fast=False,
         optimize=optimize, 
         metric=metric, 
         recursion_depth = recursion_depth
@@ -94,7 +97,7 @@ def listener(filename, queue):
 # I found it worked better to parallelize within the probability computations
 # rather than run multiple computations at once
 # So the default option is not to parallelize at all
-def compute_exact_costs(ds, recursion_depths, mem_cost, metric, exact_filename, approximate_filename, parallelize=False):
+def compute_exact_costs(ds, recursion_depths, mem_cost, metric, exact_filename, approximate_filename,parallelize=False):
     load_approximate_costs(approximate_filename)
     # This re-writes the headers; this is somewhat desirable
     # since the headers can change based on recursion depth

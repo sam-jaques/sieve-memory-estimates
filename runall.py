@@ -58,6 +58,13 @@ CLI.add_argument(
     help="Memory parameter Delta",
 )
 
+CLI.add_argument(
+    "--exhaustive",
+    type=int,
+    default=0,
+    help="Number of intervals for exhaustive theta search (0 does binary search)"
+)
+
 # Parse and apply
 args = CLI.parse_args()
 new_bulk_cost_estimate(
@@ -68,5 +75,6 @@ new_bulk_cost_estimate(
     metric = args.metric, 
     filename = None, 
     exact = args.approximate, 
-    ncores = args.jobs)
+    ncores = args.jobs,
+    exhaustive_size=args.exhaustive)
 
