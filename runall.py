@@ -34,7 +34,7 @@ CLI.add_argument(
     "--mem_cost",
     nargs="*",
     type=float,
-    default = 2.0**(-19.8),
+    default = 2.0**(-12.8),
     help = "Coefficient for cost of sort",
 )
 CLI.add_argument(

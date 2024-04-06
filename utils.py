@@ -218,7 +218,7 @@ def new_bulk_cost_estimate(mem_cost, mem_exponent, depths, D, metric, filename =
 
     if exact:
         from exact import compute_exact_costs
-        compute_exact_costs(D, depths, mem_cost, metric, exact_filename, approximate_filename,exhaustive_size)
+        compute_exact_costs(D, depths, mem_cost, metric, exact_filename, approximate_filename)
     else:
         from approximate import compute_approximate_costs
         compute_approximate_costs(D, depths, mem_cost, metric, approximate_filename,exhaustive_size)

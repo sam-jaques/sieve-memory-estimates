@@ -10,7 +10,7 @@ from tqdm import tqdm
 from collections import namedtuple
 from functools import partial
 from memoize import memoize
-from multiprocessing import Pool
+from multiprocessing import Pool, get_context
 from config import MultiProcessingConfig
 
 Probabilities = namedtuple(
@@ -458,7 +458,7 @@ def pf(d, n, k, beta=None, lb=None, ub=None, beta_and=False, integrate = True, p
 
                 # Create a Pool with the specified number of cores
                 if ncores > 1:
-                    with Pool(processes=ncores) as pool:
+                    with get_context("fork").Pool(processes=ncores) as pool:
                         # Apply the parallel function to each chunk using the Pool
                         results = pool.map(multi_integrals,jobs)
                 else:
@@ -528,7 +528,7 @@ def ngr(d, beta=None, prec=None, kappangle = mp.pi / 3, integrate = True):
 
                 # Create a Pool with the specified number of cores
                 if ncores > 1:
-                    with Pool(processes=ncores) as pool:
+                    with get_context("fork").Pool(processes=ncores) as pool:
                         # Apply the parallel function to each chunk using the Pool
                         results = pool.map(multi_integrals,jobs)
                 else:

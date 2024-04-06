@@ -1,6 +1,6 @@
 from cost import *
 from config import MagicConstants, MultiProcessingConfig
-from multiprocessing import Pool
+from multiprocessing import Pool,get_context
 import csv
 import os.path
 from probabilities import DisplayConfig
@@ -52,7 +52,7 @@ def compute_approximate_costs(ds, recursion_depths, mem_cost, metric, filename,e
     # new one once it finishes a previous one. Todo.
     sub_jobs = [jobs[i::ncores] for i in range(ncores)]
     if ncores > 1:
-        with Pool(processes=ncores) as pool:
+        with get_context("fork").Pool(processes=ncores) as pool:
             results = pool.map(get_approximate_costs,sub_jobs)
     else:
         results = [get_approximate_costs([job]) for job in jobs]

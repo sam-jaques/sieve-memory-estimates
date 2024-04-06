@@ -17,7 +17,7 @@ There are several arguments one can give to `runall.py`:
 - `--depths`: This is a list of possible recursion depths to estimate for the sieve. It defaults to {1,2,3}, where 1 is equivalent to the previous [BDGL16](https://eprint.iacr.org/2015/1128) approach, albeit with memory costs
 - `--metric`: This is the cost metric to use (or a list of them), which can either be `hardware_time`, which will add memory costs, or `classical`, which does not add memory costs
 - `--mem_cost`: This supplies the constant C for memory access, so that routing N bits of data has cost C * N^{1+Delta} for an argument Delta. This can also be a list of such costs. It defauls to `2.0**(-19.8)`.
-- `--mem_exp`: This supples the exponent Delta such that routing N bits of data has cost C * N^{1+Delta}. It defaults to 0.5
+- `--mem_exp`: This supplies the exponent Delta such that routing N bits of data has cost C * N^{1+Delta}. It defaults to 0.5
 - `--approximate`: If this is included, only an approximate cost will be calculated (see below), otherwise an exact cost will be computed.
 - `--exhaustive`: If given a number greater than 0, it will search exhaustively for the filter parameter alpha by partitioning the range of possible values according to the value given, and will use the same filter parameter at all layers of recursion
 - `--jobs`: Gives the number of threads to use.

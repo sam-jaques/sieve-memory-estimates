@@ -2,7 +2,7 @@ from cost import list_decoding, list_decoding_internal, Metrics, list_decoding_t
 from config import MagicConstants
 import csv
 import os.path
-import multiprocessing as mp
+import multiprocess as mp
 
 from probabilities import ngr, pf, MultiProcessingConfig, DisplayConfig
 
@@ -50,8 +50,7 @@ def get_exact_cost(args):
         codes = [2**float(code) for code in approximate_costs[key]["codes"]]
         optimize = False
     else:
-        print("Warning: not all approximate costs pre-computed")
-
+        print("Warning: approximate costs not pre-computed for d=",d,"depth=",recursion_depth,"memory cost=",str(log2(mem_cost))," in metric",metric)
     return list_decoding(
         d=d, 
         n=ns, 
@@ -115,11 +114,11 @@ def compute_exact_costs(ds, recursion_depths, mem_cost, metric, exact_filename, 
             jobs.append(all_args[i::ncores])
         ncores = 1
         # if ncores > 1:
-        manager = mp.Manager()
+        manager = mp.get_context("fork").Manager()
         queue = manager.Queue()
         # we've "taken" the cores, can't let anything else use them
         MultiProcessingConfig.num_cores = 1
-        with mp.Pool(processes=ncores) as pool:
+        with mp.get_context("fork").Pool(processes=ncores) as pool:
             workers = []
             # Write to the file
             watcher = pool.apply_async(listener, (exact_filename,queue))
